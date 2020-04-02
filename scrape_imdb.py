@@ -2,6 +2,8 @@ from bs4 import BeautifulSoup
 import requests
 import sqlite3
 from sqlite3 import Error as DBError
+from random import randint
+from time import sleep
 
 def create_connection(db_file):
     """ create a database connection to the SQLite database
@@ -17,6 +19,8 @@ def create_connection(db_file):
     return conn
 
 def scrape_imdb_top250():
+    """ Scrapes imdb top 250 page to find rank, title, year, rating, no of users rated, url for user reviews
+    """
     # IMDB top 250 Movies
     source = requests.get('https://www.imdb.com/chart/top/?ref_=nv_mv_250').text
 
@@ -43,44 +47,61 @@ def scrape_imdb_top250():
             no_of_users,
             review_url
         )
-        # print(movie)
         rank += 1
         movies.append(movie)
 
     return movies
 
-""" for movie in movies:
+def scrape_user_reviews(movies):
+    """ Scrapes the user review page for all movies and collects reviews from the top reviewers. The data from this can be further used for sentiment analysis and other data analysis.
+    :param movies: list of movies that contains the url to reviews
+    :return user_reviews: list of user reviews for each movie
+    """
     user_reviews = []
-    count = 0
-    review_url = movie.get('review_url')
-    # form the proper url
-    review_url = f"https://www.imdb.com/{review_url}reviews?sort=reviewVolume&dir=desc&ratingFilter=0"
-    # print(review_url)
-    response = requests.get(review_url).text
-    soup = BeautifulSoup(response, 'lxml')
-    for review_container in soup.find_all('div', class_='imdb-user-review'):
-        review_meta = review_container.find('div', class_='display-name-date')
-        review_title = review_container.a.text.strip('\n')
-        review_date = review_container.find('span', class_='review-date').text
-        reviewer =  review_meta.a.text
-        review_content = review_container.find('div', class_='content').div.text
-        review = {
-            "review_title": review_title,
-            "reviewer": reviewer,
-            "review_date": review_date,
-            "review_content": review_content
-        }
-        count += 1
-        user_reviews.append(review)
-    movie.update({'user_reviews': user_reviews})
-    movie.update({'user_review_count': count}) """
+    for movie in movies:
+        review_count = 0
+        review_movie_rank = movie[1]
+        review_movie = movie[2]
+        review_url = movie[6]
+        # form the proper url
+        review_url = f"https://www.imdb.com/{review_url}reviews?sort=reviewVolume&dir=desc&ratingFilter=0"
+        # sleep for random time to avoid IP Block
+        # sleep(randint(1, 5))
+        response = requests.get(review_url).text
+        soup = BeautifulSoup(response, 'lxml')
+
+        for review_container in soup.find_all('div', class_='imdb-user-review'):
+            review_meta = review_container.find('div', class_='display-name-date')
+            review_title = review_container.a.text.strip('\n')
+            review_date = review_container.find('span', class_='review-date').text
+            reviewer_rating = review_container.find('div', class_='ipl-ratings-bar')
+            if reviewer_rating == None:
+                reviewer_rating = ''
+            else:
+                reviewer_rating = reviewer_rating.text.strip('\n')
+            reviewer =  review_meta.a.text
+            review_content = review_container.find('div', class_='content').div.text
+            review = (
+                review_count,
+                review_movie,
+                review_movie_rank,
+                review_title,
+                reviewer_rating,
+                reviewer,
+                review_date,
+                review_content
+            )
+            review_count += 1
+            print(review_movie, review_count)
+            user_reviews.append(review)
+    return user_reviews
 
 def main():
     print("Starting Script")
     conn = create_connection('imdb_movies.db')
     c = conn.cursor()
-    table_name = "movies"
-    sql_table = f"""CREATE TABLE if not exists {table_name} (
+    table_name_movie = "movies"
+    sql_table_movie = f"""CREATE TABLE if not exists {table_name_movie} (
         id INTEGER PRIMARY KEY,
         rank INTEGER NOT NULL,
         title text NOT NULL,
@@ -89,22 +110,51 @@ def main():
         no_of_users INTEGER,
         review_url TEXT
         );"""
-    c.execute(sql_table)
-    print(sql_table)
-    print(c.rowcount)
-    if c.rowcount == 250:
-        print("Data Already Exists")
+    c.execute(sql_table_movie)
+    row_count = c.execute(f'SELECT COUNT(*) FROM {table_name_movie}')
+    row_count = int(str(next(row_count)).split(",")[0].strip('('))
+    movies =[]
+    if row_count == 250:
+        print("Data For Movies Already Exists")
+        c.execute(f"SELECT * FROM {table_name_movie}")
+        movies = c.fetchall()
     else:
         movies = scrape_imdb_top250()
-        insert_query = "INSERT INTO movies (rank, title, year, rating,no_of_users, review_url) VALUES(?, ?, ?, ?, ?, ?);"
-        c.executemany(insert_query, movies)
+        insert_movies_query = "INSERT INTO movies (rank, title, year, rating,no_of_users, review_url) VALUES(?, ?, ?, ?, ?, ?);"
+        c.executemany(insert_movies_query, movies)
         print('We have inserted', c.rowcount, 'records to the table.')
 
-        #commit the changes to db
-        conn.commit()
-        #close the connection
-        conn.close()
+    table_name_reviews = "reviews"
+    sql_table_reviews = f"""CREATE TABLE if not exists {table_name_reviews} (
+        id INTEGER PRIMARY KEY,
+        review_count INTEGER,
+        review_movie TEXT NOT NULL,
+        review_movie_rank INTEGER NOT NULL,
+        review_title TEXT NOT NULL,
+        reviewer_rating TEXT NOT NULL,
+        reviewer TEXT NOT NULL,
+        review_date TEXT,
+        review_content TEXT
+        );"""
+    c.execute(sql_table_reviews)
+    c.execute(sql_table_reviews)
+    row_count = c.execute(f'SELECT COUNT(*) FROM {table_name_reviews}')
+    row_count = int(str(next(row_count)).split(",")[0].strip('('))
+    user_reviews =[]
+    if row_count == 6249:
+        print("Data For Reviews Already Exists")
+        c.execute(f"SELECT * FROM {table_name_reviews}")
+        user_reviews = c.fetchall()
+    else:
+        user_reviews = scrape_user_reviews(movies)
+        insert_reviews_query = "INSERT INTO reviews (review_count, review_movie, review_movie_rank, review_title, reviewer_rating, reviewer, review_date, review_content) VALUES(?, ?, ?, ?, ?, ?, ?, ?);"
+        c.executemany(insert_reviews_query, user_reviews)
+        print('We have inserted', c.rowcount, 'records to the table.')
+
+    #commit the changes to db
+    conn.commit()
+    #close the connection
+    conn.close()
 
 if __name__ == '__main__':
     main()
-
