@@ -96,6 +96,9 @@ def scrape_user_reviews(movies):
             user_reviews.append(review)
     return user_reviews
 
+def create_movies_db(table_name, table_create_query, insert_query):
+    pass
+
 def main():
     print("Starting Script")
     conn = create_connection('imdb_movies.db')
